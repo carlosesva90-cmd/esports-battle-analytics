@@ -2,7 +2,7 @@ import json
 import sqlite3
 import sys
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime, timezone
 from pathlib import Path
 
 # Uso: python actualizar_datos.py battle.db index.html
@@ -24,6 +24,37 @@ with sqlite3.connect(base.resolve().as_uri() + '?mode=ro', uri=True) as db:
           AND score1 >= 0 AND score2 >= 0
         ORDER BY start_utc, id
     ''', (inicio120.isoformat(), fin.isoformat())).fetchall()
+
+# Datos generales por partido, sin duplicar el registro por jugador.
+with sqlite3.connect(base.resolve().as_uri() + '?mode=ro', uri=True) as db:
+    global_filas = db.execute("""
+        SELECT format, local_date, start_utc, player1, player2, score1, score2, tournament_id
+        FROM matches WHERE local_date BETWEEN ? AND ?
+        AND format IN ('8min','12min') AND score1 >= 0 AND score2 >= 0
+        ORDER BY start_utc, id
+    """, (inicio45.isoformat(), fin.isoformat())).fetchall()
+    # Completar las alineaciones aunque un torneo cruce el límite del periodo.
+    tournament_rows = db.execute("""
+        SELECT t.id,t.league,t.venue,t.start_utc,m.format,m.player1,m.player2
+        FROM matches m JOIN tournaments t ON t.id=m.tournament_id
+        WHERE m.tournament_id IN (SELECT DISTINCT tournament_id FROM matches WHERE local_date BETWEEN ? AND ?)
+          AND m.format IN ('8min','12min')
+    """, (inicio45.isoformat(), fin.isoformat())).fetchall()
+meta = {}
+for tid,league,venue,start,f,a,b in tournament_rows:
+    item = meta.setdefault(str(tid), {'league':league or 'Torneo','venue':venue or '', 'start':start,'format':f,'players':set()})
+    item['players'].update(x for x in (a,b) if x)
+for item in meta.values():
+    item['players'] = sorted(item['players'],key=str.casefold)
+    item['key'] = json.dumps([item['format'], item['venue'],item['players']],ensure_ascii=False,separators=(',',':'))
+gnames = {}
+grows = {f: [] for f in formatos}
+for f,d,t,a,b,x,y,tid in global_filas:
+    for jugador in (a,b):
+        if jugador not in gnames:
+            gnames[jugador] = len(gnames)
+    grows[f].append([(date.fromisoformat(d)-inicio45).days, t, gnames[a],gnames[b],x,y,tid])
+G = {'names':list(gnames), 'rows':grows, 'tournaments':meta, 'generated':datetime.now(timezone.utc).isoformat(timespec='seconds')}
 
 hist = {f: defaultdict(list) for f in formatos}
 pares = defaultdict(list)
@@ -76,8 +107,14 @@ anterior, largo = json.JSONDecoder().raw_decode(html[ini:])
 if set(anterior) != set(D) or fin < date.fromisoformat(anterior['upto']):
     raise RuntimeError('Formato incompatible o datos más antiguos')
 nuevo = json.dumps(D, ensure_ascii=True, separators=(',', ':'), allow_nan=False)
+html = html[:ini] + nuevo + html[ini + largo:]
+if 'const G=' in html:
+    gi = html.index('const G=') + len('const G=')
+    _, gl = json.JSONDecoder().raw_decode(html[gi:])
+    gj = json.dumps(G, ensure_ascii=True, separators=(',', ':'), allow_nan=False).replace('<', r'\u003c')
+    html = html[:gi] + gj + html[gi+gl:]
 temporal = pagina.with_suffix('.html.tmp')
-temporal.write_text(html[:ini] + nuevo + html[ini + largo:], encoding='utf-8')
+temporal.write_text(html, encoding='utf-8')
 temporal.replace(pagina)
 print('Datos hasta:', D['upto'])
 for f in formatos:
