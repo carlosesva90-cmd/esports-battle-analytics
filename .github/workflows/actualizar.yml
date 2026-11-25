@@ -1,0 +1,24 @@
+name: Actualizar Esports Battle
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sincronizar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      ESOCCER_BATTLE_DB: /tmp/battle.db
+      ESOCCER_BATTLE_NO_UPDATE_CHECK: "1"
+
+    steps:
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Sincronizar resultados
+        run: uvx --from git+https://github.com/Jhanee01/esoccer-battle-mcp@v1.0.2 esoccer-battle-mcp sync
+
+      - name: Verificar base de datos
+        run: ls -lh /tmp/battle.db
