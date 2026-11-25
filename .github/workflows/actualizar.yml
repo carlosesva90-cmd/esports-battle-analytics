@@ -22,3 +22,11 @@ jobs:
 
       - name: Verificar base de datos
         run: ls -lh /tmp/battle.db
+
+      - name: Guardar base de datos
+        uses: actions/upload-artifact@v4
+        with:
+          name: esports-battle-datos
+          path: /tmp/battle.db
+          retention-days: 7
+          if-no-files-found: error
